@@ -183,6 +183,27 @@ def is_blank(strain: str | None) -> bool:
     return isinstance(strain, str) and strain.strip().lower().startswith("blank")
 
 
+def detect_blank_contamination(label: TecanLabel, layout: dict, threshold: float = 1.5) -> set[str]:
+    """Return blank wells where any OD exceeds threshold × mean OD in the first hour."""
+    contaminated = set()
+    first_hour = label.times_h <= 1.0
+    for well, strain in layout["strains"].items():
+        if not is_blank(strain):
+            continue
+        od = label.wells.get(well)
+        if od is None:
+            continue
+        fh_vals = od[first_hour & np.isfinite(od)]
+        if len(fh_vals) == 0:
+            continue
+        mean_fh = np.mean(fh_vals)
+        if mean_fh <= 0:
+            continue
+        if np.any(od[np.isfinite(od)] > threshold * mean_fh):
+            contaminated.add(well)
+    return contaminated
+
+
 # ============================================================================
 #  GROWTH MODELS
 # ============================================================================
@@ -414,7 +435,8 @@ def sliding_window_mu(t: np.ndarray, od: np.ndarray,
 # ============================================================================
 #  BLANK SUBTRACTION
 # ============================================================================
-def blank_trace(label: TecanLabel, layout: dict, medium: str) -> np.ndarray:
+def blank_trace(label: TecanLabel, layout: dict, medium: str,
+                excluded_wells: set[str] | None = None) -> np.ndarray:
     """Mean blank trajectory for a medium. Returns zeros if no blanks."""
     n = len(label.times_s)
     sums = np.zeros(n)
@@ -426,6 +448,8 @@ def blank_trace(label: TecanLabel, layout: dict, medium: str) -> np.ndarray:
             continue
         if well not in label.wells:
             continue
+        if excluded_wells and well in excluded_wells:
+            continue
         od = label.wells[well]
         mask = np.isfinite(od)
         sums[mask] += od[mask]
@@ -433,14 +457,15 @@ def blank_trace(label: TecanLabel, layout: dict, medium: str) -> np.ndarray:
     return np.where(counts > 0, sums / np.maximum(counts, 1), 0.0)
 
 
-def corrected_od(label: TecanLabel, layout: dict, well: str, do_blank: bool) -> np.ndarray:
+def corrected_od(label: TecanLabel, layout: dict, well: str, do_blank: bool,
+                 excluded_wells: set[str] | None = None) -> np.ndarray:
     od = label.wells.get(well)
     if od is None:
         return np.array([])
     if not do_blank:
         return od.copy()
     medium = layout["media"].get(well)
-    blk = blank_trace(label, layout, medium) if medium is not None else 0.0
+    blk = blank_trace(label, layout, medium, excluded_wells) if medium is not None else 0.0
     return od - blk
 
 
@@ -513,6 +538,13 @@ with st.sidebar:
     st.header("2 · Measurement label")
     label_name = st.selectbox("Label", [lbl.name for lbl in labels])
     label = next(l for l in labels if l.name == label_name)
+
+    contaminated_wells = detect_blank_contamination(label, layout)
+    if contaminated_wells:
+        st.warning(
+            f"Contaminated blank wells excluded from blank subtraction: "
+            f"{', '.join(sorted(contaminated_wells))}"
+        )
 
     st.header("3 · Analysis options")
     dil_mode = st.radio("Dilution values are",
@@ -640,7 +672,7 @@ with st.spinner("Fitting growth models…"):
         n = len(label.times_s)
         stacked = np.full((len(wells), n), np.nan)
         for i, (w, _, _) in enumerate(wells):
-            stacked[i] = corrected_od(label, layout, w, do_blank)
+            stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
         mean_trace = np.nanmean(stacked, axis=0)
         sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
@@ -774,7 +806,7 @@ for strain in selected_strains:
     n = len(label.times_s)
     stacked = np.full((len(wells), n), np.nan)
     for i, (w, _, _) in enumerate(wells):
-        stacked[i] = corrected_od(label, layout, w, do_blank)
+        stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
     mean_trace = np.nanmean(stacked, axis=0)
     sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
