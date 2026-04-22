@@ -437,24 +437,64 @@ def sliding_window_mu(t: np.ndarray, od: np.ndarray,
 # ============================================================================
 def blank_trace(label: TecanLabel, layout: dict, medium: str,
                 excluded_wells: set[str] | None = None) -> np.ndarray:
-    """Mean blank trajectory for a medium. Returns zeros if no blanks."""
+    """Mean blank trajectory for a medium.
+
+    Falls back to the base medium (portion before '+') when no exact-match blank
+    wells exist — e.g. uses the LB blank for LB+Kan strain wells.
+    Returns zeros if no blank wells are found at all.
+    """
     n = len(label.times_s)
-    sums = np.zeros(n)
-    counts = np.zeros(n)
-    for well, strain in layout["strains"].items():
-        if strain is None or not is_blank(str(strain)):
-            continue
-        if layout["media"].get(well) != medium:
-            continue
-        if well not in label.wells:
-            continue
-        if excluded_wells and well in excluded_wells:
-            continue
-        od = label.wells[well]
-        mask = np.isfinite(od)
-        sums[mask] += od[mask]
-        counts[mask] += 1
-    return np.where(counts > 0, sums / np.maximum(counts, 1), 0.0)
+
+    def _compute(med: str) -> np.ndarray | None:
+        sums, counts, found = np.zeros(n), np.zeros(n), False
+        for well, strain in layout["strains"].items():
+            if strain is None or not is_blank(str(strain)):
+                continue
+            if layout["media"].get(well) != med:
+                continue
+            if well not in label.wells:
+                continue
+            if excluded_wells and well in excluded_wells:
+                continue
+            found = True
+            od = label.wells[well]
+            mask = np.isfinite(od)
+            sums[mask] += od[mask]
+            counts[mask] += 1
+        return np.where(counts > 0, sums / np.maximum(counts, 1), 0.0) if found else None
+
+    result = _compute(medium)
+    if result is not None:
+        return result
+    if medium and "+" in medium:
+        base = medium.split("+")[0].strip()
+        result = _compute(base)
+        if result is not None:
+            return result
+    return np.zeros(n)
+
+
+def blank_match_type(layout: dict, medium: str | None,
+                     excluded_wells: set[str] | None = None) -> str:
+    """Return 'exact', 'fallback', or 'none' for the blank available for this medium."""
+    if medium is None:
+        return "none"
+
+    def has_blank(med: str) -> bool:
+        return any(
+            s is not None and is_blank(str(s))
+            and layout["media"].get(w) == med
+            and (not excluded_wells or w not in excluded_wells)
+            for w, s in layout["strains"].items()
+        )
+
+    if has_blank(medium):
+        return "exact"
+    if "+" in medium:
+        base = medium.split("+")[0].strip()
+        if has_blank(base):
+            return "fallback"
+    return "none"
 
 
 def corrected_od(label: TecanLabel, layout: dict, well: str, do_blank: bool,
@@ -545,6 +585,22 @@ with st.sidebar:
             f"Contaminated blank wells excluded from blank subtraction: "
             f"{', '.join(sorted(contaminated_wells))}"
         )
+
+    strain_media = sorted({
+        layout["media"].get(w)
+        for w, s in layout["strains"].items()
+        if s is not None and not is_blank(str(s)) and layout["media"].get(w) is not None
+    })
+    blank_warnings = []
+    for med in strain_media:
+        mt = blank_match_type(layout, med, contaminated_wells)
+        if mt == "fallback":
+            base = med.split("+")[0].strip()
+            blank_warnings.append(f"{med}: no exact blank found, using {base} blank as substitute")
+        elif mt == "none":
+            blank_warnings.append(f"{med}: no blank found, no correction applied")
+    if blank_warnings:
+        st.warning("Blank matching issues:\n" + "\n".join(f"• {w}" for w in blank_warnings))
 
     st.header("3 · Analysis options")
     dil_mode = st.radio("Dilution values are",
