@@ -426,7 +426,7 @@ def sliding_window_mu(t: np.ndarray, od: np.ndarray,
         ss_tot = syy - sy * sy / n
         ss_res = syy - intercept * sy - slope * sxy
         r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        if best is None or r2 > best["r2"]:
+        if best is None or slope > best["mu"]:
             best = {"mu": slope, "intercept": intercept, "r2": r2,
                     "t_start": x[0], "t_end": x[-1], "t_mid": (x[0] + x[-1]) / 2}
     return best
