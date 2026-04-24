@@ -953,7 +953,7 @@ for strain in selected_strains:
         fig.add_trace(go.Scatter(
             x=np.concatenate([label.times_h, label.times_h[::-1]]),
             y=np.concatenate([y_up, y_lo[::-1]]),
-            fill="toself", fillcolor=color + "22", line=dict(color="rgba(0,0,0,0)"),
+            fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
             showlegend=False, hoverinfo="skip",
         ))
 
