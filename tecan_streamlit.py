@@ -426,7 +426,7 @@ def sliding_window_mu(t: np.ndarray, od: np.ndarray,
         ss_tot = syy - sy * sy / n
         ss_res = syy - intercept * sy - slope * sxy
         r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
-        if best is None or r2 > best["r2"]:
+        if best is None or slope > best["mu"]:
             best = {"mu": slope, "intercept": intercept, "r2": r2,
                     "t_start": x[0], "t_end": x[-1], "t_mid": (x[0] + x[-1]) / 2}
     return best
@@ -530,8 +530,9 @@ def align_traces(times_h: np.ndarray, stacked: np.ndarray,
                 return float(times_h[i] + frac * (times_h[i + 1] - times_h[i]))
         return None
 
-    if ref_dil_exp is not None and ref_dil_exp in dil_exps:
-        ref_idx = dil_exps.index(ref_dil_exp)
+    if ref_dil_exp is not None and dil_exps:
+        closest = min(range(len(dil_exps)), key=lambda i: abs(dil_exps[i] - ref_dil_exp))
+        ref_idx = closest if abs(dil_exps[closest] - ref_dil_exp) < 0.01 else int(np.argmax(dil_exps))
     else:
         ref_idx = int(np.argmax(dil_exps))
 
@@ -937,7 +938,7 @@ for strain in selected_strains:
     for i, (w, _, _) in enumerate(wells):
         stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
     if do_align and len(wells) > 1:
-        stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od)
+        stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od, align_ref_dil)
     mean_trace = np.nanmean(stacked, axis=0)
     sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
@@ -953,7 +954,7 @@ for strain in selected_strains:
         fig.add_trace(go.Scatter(
             x=np.concatenate([label.times_h, label.times_h[::-1]]),
             y=np.concatenate([y_up, y_lo[::-1]]),
-            fill="toself", fillcolor=color + "22", line=dict(color="rgba(0,0,0,0)"),
+            fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
             showlegend=False, hoverinfo="skip",
         ))
 
