@@ -510,10 +510,12 @@ def corrected_od(label: TecanLabel, layout: dict, well: str, do_blank: bool,
 
 
 def align_traces(times_h: np.ndarray, stacked: np.ndarray,
-                 dil_exps: list[float], align_od: float) -> np.ndarray:
+                 dil_exps: list[float], align_od: float,
+                 ref_dil_exp: float | None = None) -> np.ndarray:
     """Shift each well in time so all cross align_od at the same moment.
 
-    Uses the most-diluted well (highest dil_exp) as the time reference.
+    Uses ref_dil_exp as the time reference (first matching well); falls back to
+    the most-diluted well if ref_dil_exp is None or not present in dil_exps.
     Wells that never cross align_od are returned as NaN rows (excluded from mean/SD).
     """
     from scipy.interpolate import interp1d as _interp1d
@@ -528,7 +530,11 @@ def align_traces(times_h: np.ndarray, stacked: np.ndarray,
                 return float(times_h[i] + frac * (times_h[i + 1] - times_h[i]))
         return None
 
-    ref_idx = int(np.argmax(dil_exps))
+    if ref_dil_exp is not None and ref_dil_exp in dil_exps:
+        ref_idx = dil_exps.index(ref_dil_exp)
+    else:
+        ref_idx = int(np.argmax(dil_exps))
+
     t_ref = crossing_time(stacked[ref_idx])
     if t_ref is None:
         return stacked.copy()
@@ -665,13 +671,26 @@ with st.sidebar:
              "moment before computing the mean ± SD. Prevents naive averaging from flattening "
              "the exponential phase when dilutions have different lag times.",
     )
-    align_od = st.number_input(
-        "Alignment OD (blank-subtracted)", value=0.05,
-        min_value=0.001, max_value=1.0, step=0.005,
-        help="OD at which all dilution curves are time-aligned. Should be above the noise "
-             "floor but within early exponential phase. The most-diluted well is used as "
-             "the time reference.",
-    ) if do_align else 0.05
+    if do_align:
+        align_od = st.number_input(
+            "Alignment OD (blank-subtracted)", value=0.05,
+            min_value=0.001, max_value=1.0, step=0.005,
+            help="OD at which all dilution curves are time-aligned. Should be above the "
+                 "noise floor but within early exponential phase.",
+        )
+        _dil_options = sorted({normalize_dilution(v, dil_mode)
+                               for v in layout["dilutions"].values() if v is not None})
+        align_ref_dil = st.selectbox(
+            "Reference dilution for alignment",
+            options=_dil_options,
+            index=len(_dil_options) - 1,
+            format_func=lambda x: f"10^{x}" if x != 0 else "undiluted (1×)",
+            help="The dilution whose OD-crossing time is used as t=0 for alignment. "
+                 "Most diluted is recommended — it is typically in clear exponential "
+                 "phase without carryover from the previous culture.",
+        )
+    else:
+        align_od, align_ref_dil = 0.05, None
 
     st.header("4 · Fit settings")
     fit_method = st.selectbox(
@@ -782,7 +801,7 @@ with st.spinner("Fitting growth models…"):
         for i, (w, _, _) in enumerate(wells):
             stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
         if do_align and len(wells) > 1:
-            stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od)
+            stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od, align_ref_dil)
         mean_trace = np.nanmean(stacked, axis=0)
         sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
