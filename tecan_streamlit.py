@@ -530,8 +530,9 @@ def align_traces(times_h: np.ndarray, stacked: np.ndarray,
                 return float(times_h[i] + frac * (times_h[i + 1] - times_h[i]))
         return None
 
-    if ref_dil_exp is not None and ref_dil_exp in dil_exps:
-        ref_idx = dil_exps.index(ref_dil_exp)
+    if ref_dil_exp is not None and dil_exps:
+        closest = min(range(len(dil_exps)), key=lambda i: abs(dil_exps[i] - ref_dil_exp))
+        ref_idx = closest if abs(dil_exps[closest] - ref_dil_exp) < 0.01 else int(np.argmax(dil_exps))
     else:
         ref_idx = int(np.argmax(dil_exps))
 
