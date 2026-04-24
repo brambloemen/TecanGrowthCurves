@@ -509,6 +509,45 @@ def corrected_od(label: TecanLabel, layout: dict, well: str, do_blank: bool,
     return od - blk
 
 
+def align_traces(times_h: np.ndarray, stacked: np.ndarray,
+                 dil_exps: list[float], align_od: float) -> np.ndarray:
+    """Shift each well in time so all cross align_od at the same moment.
+
+    Uses the most-diluted well (highest dil_exp) as the time reference.
+    Wells that never cross align_od are returned as NaN rows (excluded from mean/SD).
+    """
+    from scipy.interpolate import interp1d as _interp1d
+
+    n_wells, n_times = stacked.shape
+
+    def crossing_time(od: np.ndarray) -> float | None:
+        for i in range(n_times - 1):
+            v0, v1 = od[i], od[i + 1]
+            if np.isfinite(v0) and np.isfinite(v1) and v0 <= align_od <= v1:
+                frac = (align_od - v0) / (v1 - v0)
+                return float(times_h[i] + frac * (times_h[i + 1] - times_h[i]))
+        return None
+
+    ref_idx = int(np.argmax(dil_exps))
+    t_ref = crossing_time(stacked[ref_idx])
+    if t_ref is None:
+        return stacked.copy()
+
+    aligned = np.full_like(stacked, np.nan)
+    for i in range(n_wells):
+        t_i = crossing_time(stacked[i])
+        if t_i is None:
+            continue
+        shift = t_ref - t_i
+        mask = np.isfinite(stacked[i])
+        if mask.sum() < 2:
+            continue
+        f = _interp1d(times_h[mask], stacked[i][mask], bounds_error=False, fill_value=np.nan)
+        aligned[i] = f(times_h - shift)
+
+    return aligned
+
+
 def normalize_dilution(v, mode: str) -> float:
     """Return log10 exponent (0 = undiluted, 1 = 10×, 2 = 100×...)."""
     if v is None or v == "":
@@ -620,6 +659,19 @@ with st.sidebar:
                                      help="Strains with less than this much ln(OD) increase are "
                                           "unlikely to have completed enough of a sigmoid for the "
                                           "Gompertz/logistic to give reliable μ. 1.0 ≈ 2.7× increase.")
+    do_align = st.checkbox(
+        "Align dilutions by OD crossing before averaging", value=True,
+        help="Shifts each dilution curve in time so all cross the alignment OD at the same "
+             "moment before computing the mean ± SD. Prevents naive averaging from flattening "
+             "the exponential phase when dilutions have different lag times.",
+    )
+    align_od = st.number_input(
+        "Alignment OD (blank-subtracted)", value=0.05,
+        min_value=0.001, max_value=1.0, step=0.005,
+        help="OD at which all dilution curves are time-aligned. Should be above the noise "
+             "floor but within early exponential phase. The most-diluted well is used as "
+             "the time reference.",
+    ) if do_align else 0.05
 
     st.header("4 · Fit settings")
     fit_method = st.selectbox(
@@ -729,6 +781,8 @@ with st.spinner("Fitting growth models…"):
         stacked = np.full((len(wells), n), np.nan)
         for i, (w, _, _) in enumerate(wells):
             stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
+        if do_align and len(wells) > 1:
+            stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od)
         mean_trace = np.nanmean(stacked, axis=0)
         sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
@@ -863,6 +917,8 @@ for strain in selected_strains:
     stacked = np.full((len(wells), n), np.nan)
     for i, (w, _, _) in enumerate(wells):
         stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
+    if do_align and len(wells) > 1:
+        stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od)
     mean_trace = np.nanmean(stacked, axis=0)
     sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
