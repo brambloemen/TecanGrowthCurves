@@ -938,7 +938,7 @@ for strain in selected_strains:
     for i, (w, _, _) in enumerate(wells):
         stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
     if do_align and len(wells) > 1:
-        stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od)
+        stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od, align_ref_dil)
     mean_trace = np.nanmean(stacked, axis=0)
     sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
