@@ -555,6 +555,16 @@ def align_traces(times_h: np.ndarray, stacked: np.ndarray,
     return aligned
 
 
+def time_to_od(times_h: np.ndarray, od_trace: np.ndarray, threshold: float) -> float | None:
+    """Return interpolated time when od_trace first crosses threshold, or None."""
+    for i in range(len(times_h) - 1):
+        v0, v1 = od_trace[i], od_trace[i + 1]
+        if np.isfinite(v0) and np.isfinite(v1) and v0 <= threshold <= v1:
+            frac = (threshold - v0) / (v1 - v0)
+            return float(times_h[i] + frac * (times_h[i + 1] - times_h[i]))
+    return None
+
+
 def normalize_dilution(v, mode: str) -> float:
     """Return log10 exponent (0 = undiluted, 1 = 10×, 2 = 100×...)."""
     if v is None or v == "":
@@ -713,6 +723,24 @@ with st.sidebar:
     do_bootstrap = st.checkbox("Bootstrap 95% CI on μ_max", value=False,
                                 help="200 resamples — adds a few seconds per strain. "
                                 "Only applies to the mechanistic models when fitting mean.")
+
+    st.header("5 · Dilution regression")
+    do_dil_regression = st.checkbox(
+        "Show dilution series regression",
+        value=True,
+        help="For strains with ≥ 2 dilutions, plots log₁₀(dilution factor) vs. time to "
+             "reach the threshold OD and fits a line. The slope × ln(10) gives an "
+             "independent μ_max estimate.",
+    )
+    if do_dil_regression:
+        dil_thresh_od = st.number_input(
+            "Threshold OD (blank-subtracted)",
+            value=0.1, min_value=0.001, max_value=2.0, step=0.01,
+            help="Each well's blank-corrected OD crossing time is used as the x-axis. "
+                 "Choose a value in early exponential phase, above the noise floor.",
+        )
+    else:
+        dil_thresh_od = 0.1
 
 # ---- Main: strain selection ----
 st.subheader("Plate layout")
@@ -1036,6 +1064,92 @@ if metrics_rows:
                        file_name="growth_metrics.csv", mime="text/csv")
 else:
     st.info("No successful fits — try lowering the fit floor or switching model.")
+
+
+# ---- Dilution series regression ----
+if do_dil_regression:
+    st.subheader("Dilution series regression")
+    st.caption(
+        f"Each point is one well. x = time to reach OD {dil_thresh_od:.3g} (blank-subtracted). "
+        "y = log₁₀(dilution factor). Slope × ln(10) = μ_max (h⁻¹). "
+        "Only strains with ≥ 2 dilutions crossing the threshold are shown."
+    )
+
+    from scipy.stats import linregress as _linregress
+
+    dil_reg_rows = []
+    fig_dil = go.Figure()
+
+    for strain in selected_strains:
+        wells = get_wells_for_strain(strain)
+        if len(wells) < 2:
+            continue
+        color = strain_color[strain]
+
+        t_vals, d_vals = [], []
+        for w, dil_exp, _ in wells:
+            od_trace = corrected_od(label, layout, w, do_blank, contaminated_wells)
+            t = time_to_od(label.times_h, od_trace, dil_thresh_od)
+            if t is not None:
+                t_vals.append(t)
+                d_vals.append(dil_exp)
+
+        if len(t_vals) < 2:
+            continue
+
+        t_arr = np.array(t_vals)
+        d_arr = np.array(d_vals)
+
+        slope, intercept, r, p_val, slope_se = _linregress(t_arr, d_arr)
+        mu_dil = slope * np.log(10)
+        mu_se = slope_se * np.log(10)
+
+        fig_dil.add_trace(go.Scatter(
+            x=t_arr, y=d_arr, mode="markers",
+            name=strain, legendgroup=strain,
+            marker=dict(color=color, size=9, line=dict(color="white", width=1)),
+            hovertemplate=f"<b>{strain}</b><br>t=%{{x:.2f}} h<br>log₁₀(D)=%{{y:.1f}}<extra></extra>",
+        ))
+
+        t_line = np.linspace(t_arr.min(), t_arr.max(), 60)
+        fig_dil.add_trace(go.Scatter(
+            x=t_line, y=slope * t_line + intercept, mode="lines",
+            legendgroup=strain, showlegend=False,
+            line=dict(color=color, width=1.5, dash="dot"),
+            hovertemplate=f"μ = {mu_dil:.3f} h⁻¹<extra></extra>",
+        ))
+
+        dil_reg_rows.append({
+            "strain": strain,
+            "μ_dil (h⁻¹)": round(mu_dil, 3),
+            "μ_dil SE": round(mu_se, 3),
+            "t_d (min)": round(60 * np.log(2) / mu_dil, 1) if mu_dil > 0 else np.nan,
+            "slope (log₁₀/h)": round(slope, 4),
+            "R²": round(r ** 2, 4),
+            "p-value": round(p_val, 4),
+            "n dilutions": len(t_vals),
+        })
+
+    if dil_reg_rows:
+        fig_dil.update_layout(
+            template="simple_white",
+            xaxis_title=f"Time to OD {dil_thresh_od:.3g} (h)",
+            yaxis_title="log₁₀(dilution factor)",
+            height=400, margin=dict(l=60, r=20, t=10, b=50),
+            plot_bgcolor="white", paper_bgcolor="white",
+            hoverlabel=dict(bgcolor="#1a1a1a",
+                            font=dict(color="white", family="JetBrains Mono, monospace", size=11)),
+        )
+        st.plotly_chart(fig_dil, use_container_width=True)
+        dil_df = pd.DataFrame(dil_reg_rows).sort_values("μ_dil (h⁻¹)", ascending=False)
+        st.dataframe(dil_df, use_container_width=True, hide_index=True,
+                     height=min(600, 40 + 35 * len(dil_df)))
+        csv_dil = dil_df.to_csv(index=False).encode("utf-8")
+        st.download_button("Download dilution regression CSV", csv_dil,
+                           file_name="dilution_regression.csv", mime="text/csv")
+    else:
+        st.info(f"No strains have ≥ 2 dilutions crossing OD {dil_thresh_od:.3g}. "
+                "Try lowering the threshold OD.")
 
 
 # ---- Per-strain detail expanders ----
