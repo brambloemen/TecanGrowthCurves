@@ -1084,7 +1084,12 @@ with st.spinner("Fitting growth models…"):
 
 # ---- Plot ----
 st.subheader("Growth curves")
-scale = st.radio("Y axis", ["OD", "ln(OD)"], horizontal=True, label_visibility="collapsed")
+_pcol1, _pcol2 = st.columns([1, 2])
+with _pcol1:
+    scale = st.radio("Y axis", ["OD", "ln(OD)"], horizontal=True, label_visibility="collapsed")
+with _pcol2:
+    curve_view = st.radio("Curves", ["Mean ± SD", "Individual wells"],
+                          horizontal=True, label_visibility="collapsed")
 
 fig = go.Figure()
 
@@ -1099,32 +1104,53 @@ for strain in selected_strains:
         stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
     if do_align and len(wells) > 1:
         stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od, align_ref_dil)
-    mean_trace = np.nanmean(stacked, axis=0)
-    sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
-    if scale == "ln(OD)":
-        y_mean = np.where(mean_trace > 0, np.log(np.maximum(mean_trace, 1e-10)), np.nan)
-        y_up = np.where(mean_trace + sd_trace > 0, np.log(np.maximum(mean_trace + sd_trace, 1e-10)), np.nan)
-        y_lo = np.where(mean_trace - sd_trace > 0, np.log(np.maximum(mean_trace - sd_trace, 1e-10)), np.nan)
+    if curve_view == "Individual wells":
+        _br, _bg, _bb = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        _dil_exps = [d for _, d, _ in wells]
+        _max_dil  = max(_dil_exps) if _dil_exps else 1.0
+        for _wi, (_w, _dil_exp, _med) in enumerate(wells):
+            _alpha = max(0.40, 1.0 - (_dil_exp / max(_max_dil, 1)) * 0.55)
+            _tc = f"rgba({_br},{_bg},{_bb},{_alpha:.2f})"
+            _dl = f"10^{_dil_exp:.0f}×" if _dil_exp != 0 else "1×"
+            _od = stacked[_wi]
+            _y = (np.where(_od > 0, np.log(np.maximum(_od, 1e-10)), np.nan)
+                  if scale == "ln(OD)" else _od)
+            _show_legend = (_wi == 0)
+            fig.add_trace(go.Scatter(
+                x=label.times_h, y=_y, mode="lines",
+                name=strain if _show_legend else f"{strain} · {_dl}",
+                legendgroup=strain,
+                showlegend=_show_legend,
+                line=dict(color=_tc, width=1.8),
+                hovertemplate=f"<b>{strain}</b> · {_w} · {_dl}<br>t=%{{x:.2f}} h<br>y=%{{y:.4f}}<extra></extra>",
+            ))
     else:
-        y_mean, y_up, y_lo = mean_trace, mean_trace + sd_trace, mean_trace - sd_trace
+        mean_trace = np.nanmean(stacked, axis=0)
+        sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
-    # SD band
-    if len(wells) > 1:
+        if scale == "ln(OD)":
+            y_mean = np.where(mean_trace > 0, np.log(np.maximum(mean_trace, 1e-10)), np.nan)
+            y_up = np.where(mean_trace + sd_trace > 0, np.log(np.maximum(mean_trace + sd_trace, 1e-10)), np.nan)
+            y_lo = np.where(mean_trace - sd_trace > 0, np.log(np.maximum(mean_trace - sd_trace, 1e-10)), np.nan)
+        else:
+            y_mean, y_up, y_lo = mean_trace, mean_trace + sd_trace, mean_trace - sd_trace
+
+        if len(wells) > 1:
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([label.times_h, label.times_h[::-1]]),
+                y=np.concatenate([y_up, y_lo[::-1]]),
+                fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
+                showlegend=False, hoverinfo="skip",
+            ))
+
         fig.add_trace(go.Scatter(
-            x=np.concatenate([label.times_h, label.times_h[::-1]]),
-            y=np.concatenate([y_up, y_lo[::-1]]),
-            fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
-            showlegend=False, hoverinfo="skip",
+            x=label.times_h, y=y_mean, mode="lines",
+            name=strain,
+            line=dict(color=color, width=2),
+            legendgroup=strain,
+            hovertemplate=f"<b>{strain}</b><br>t=%{{x:.2f}} h<br>OD=%{{y:.3f}}<extra></extra>",
         ))
-
-    fig.add_trace(go.Scatter(
-        x=label.times_h, y=y_mean, mode="lines",
-        name=strain,
-        line=dict(color=color, width=2),
-        legendgroup=strain,
-        hovertemplate=f"<b>{strain}</b><br>t=%{{x:.2f}} h<br>OD=%{{y:.3f}}<extra></extra>",
-    ))
 
     # Overlay fit if available
     if strain in fit_objects:
