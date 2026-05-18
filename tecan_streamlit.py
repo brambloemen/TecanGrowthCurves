@@ -146,6 +146,10 @@ def _parse_block(aoa: list[list], start_r: int, end_r: int, name: str) -> TecanL
 #  LAYOUT PARSER
 # ============================================================================
 ROWS = list("ABCDEFGH")
+PALETTE = ["#8b3a2a", "#c06a3a", "#d9a54e", "#9c8e3a", "#5b7a3a", "#3a6b4e",
+           "#3a6b78", "#3d5a8a", "#5a4a8a", "#7a3a7a", "#a8456b", "#6b3d3d",
+           "#a87a4e", "#7a6b3a", "#4e8a6b", "#4e6b8a", "#7a4e8a", "#8a4e6b",
+           "#4a4a4a", "#6b4a2a", "#2a4a6b", "#5a8a3a", "#8a5a3a", "#3a8a8a"]
 
 
 def parse_layout(file: io.BytesIO | str) -> dict:
@@ -580,6 +584,99 @@ def normalize_dilution(v, mode: str) -> float:
     return round(float(np.log10(n)), 3)
 
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16)
+    return f"rgba({r},{g},{b},{alpha:.2f})"
+
+
+def build_plate_fig(layout: dict, all_strain_color: dict, dil_mode: str,
+                    contaminated_wells: set, selected_well: str | None = None,
+                    selected_strains: set | None = None) -> "go.Figure":
+    """Return a Plotly scatter figure showing the 96-well plate."""
+    sel = selected_strains or set()
+    xs, ys, colors, line_colors, texts, hovers, well_ids = [], [], [], [], [], [], []
+
+    for ri, row in enumerate(ROWS):
+        for ci in range(1, 13):
+            well = f"{row}{ci}"
+            xs.append(ci)
+            ys.append(ri)
+            well_ids.append(well)
+
+            strain = layout["strains"].get(well)
+            medium = layout["media"].get(well) or ""
+            dil    = layout["dilutions"].get(well)
+
+            if strain is None:
+                colors.append("rgba(228,224,215,0.5)")
+                line_colors.append("rgba(195,191,182,0.6)")
+                texts.append("")
+                hovers.append(f"<b>{well}</b> · empty")
+            else:
+                s = str(strain)
+                dil_exp   = normalize_dilution(dil, dil_mode) if dil is not None else 0.0
+                dil_label = f"10^{dil_exp:.0f}×" if dil_exp != 0 else "undiluted"
+                if is_blank(s):
+                    is_c = well in contaminated_wells
+                    base = "#e85c3a" if is_c else "#9e9589"
+                    colors.append(_rgba(base, 0.85))
+                    line_colors.append(base)
+                    texts.append("B!" if is_c else "B")
+                    warn = " · ⚠ contaminated" if is_c else ""
+                    hovers.append(f"<b>{well}</b> · {s}<br>{medium}{warn}")
+                else:
+                    base  = all_strain_color.get(s, "#888888")
+                    alpha = max(0.30, 1.0 - min(3, dil_exp) * 0.22)
+                    if sel and s not in sel:
+                        alpha *= 0.20
+                    colors.append(_rgba(base, alpha))
+                    line_colors.append(_rgba(base, min(1.0, alpha + 0.15)))
+                    label = s[:4] + ("…" if len(s) > 4 else "")
+                    texts.append(label)
+                    hovers.append(f"<b>{well}</b> · {s}<br>{medium} · {dil_label}")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys,
+        mode="markers+text",
+        text=texts,
+        textposition="middle center",
+        textfont=dict(size=7, color="white", family="monospace"),
+        marker=dict(symbol="square", size=30, color=colors,
+                    line=dict(color=line_colors, width=1)),
+        hovertext=hovers,
+        hoverinfo="text",
+        customdata=well_ids,
+        selected=dict(marker=dict(opacity=1.0)),
+        unselected=dict(marker=dict(opacity=0.55)),
+    ))
+
+    if selected_well:
+        ri_sw = ROWS.index(selected_well[0]) if selected_well[0] in ROWS else -1
+        ci_sw = int(selected_well[1:]) if selected_well[1:].isdigit() else -1
+        if ri_sw >= 0 and 1 <= ci_sw <= 12:
+            fig.add_trace(go.Scatter(
+                x=[ci_sw], y=[ri_sw], mode="markers",
+                marker=dict(symbol="square", size=36, color="rgba(0,0,0,0)",
+                            line=dict(color="#f97316", width=3)),
+                hoverinfo="skip", showlegend=False,
+            ))
+
+    fig.update_layout(
+        height=230,
+        margin=dict(l=30, r=10, t=28, b=10),
+        xaxis=dict(tickvals=list(range(1, 13)), ticktext=[str(i) for i in range(1, 13)],
+                   range=[0.3, 12.7], showgrid=False, zeroline=False, side="top"),
+        yaxis=dict(tickvals=list(range(8)), ticktext=list(ROWS),
+                   range=[7.7, -0.7], showgrid=False, zeroline=False),
+        plot_bgcolor="white", paper_bgcolor="white",
+        showlegend=False, clickmode="event+select", dragmode="select",
+        hoverlabel=dict(bgcolor="#1a1a1a",
+                        font=dict(color="white", family="JetBrains Mono, monospace", size=11)),
+    )
+    return fig
+
+
 # ============================================================================
 #  STREAMLIT APP
 # ============================================================================
@@ -743,30 +840,70 @@ with st.sidebar:
         dil_thresh_od = 0.1
 
 # ---- Main: strain selection ----
-st.subheader("Plate layout")
 
-# Build a plate-shaped grid for quick visual reference
-strains_grid = []
-for r in ROWS:
-    row = []
-    for c in range(1, 13):
-        w = f"{r}{c}"
-        s = layout["strains"].get(w)
-        d = layout["dilutions"].get(w)
-        m = layout["media"].get(w)
-        if s is None:
-            row.append("")
-        else:
-            row.append(str(s))
-    strains_grid.append(row)
-plate_df = pd.DataFrame(strains_grid, index=ROWS, columns=list(range(1, 13)))
-st.dataframe(plate_df, use_container_width=True, height=300)
-
-# Unique strains (non-blank)
+# Unique strains (non-blank) — needed before plate rendering
 all_strains = sorted(
     {str(s) for s in layout["strains"].values() if s is not None and not is_blank(str(s))},
     key=lambda x: (not x.replace(".", "").isdigit(), float(x) if x.replace(".", "").isdigit() else 0, x),
 )
+all_strain_color = {s: PALETTE[i % len(PALETTE)] for i, s in enumerate(all_strains)}
+
+if "selected_well" not in st.session_state:
+    st.session_state["selected_well"] = None
+
+st.subheader("Plate layout")
+st.caption("Click a well to inspect its individual growth curve. Opacity encodes dilution depth.")
+
+_plate_fig = build_plate_fig(
+    layout, all_strain_color, dil_mode, contaminated_wells,
+    selected_well=st.session_state["selected_well"],
+    selected_strains=set(),  # will refresh once selected_strains is known
+)
+try:
+    _plate_event = st.plotly_chart(_plate_fig, on_select="rerun",
+                                   key="plate_chart", use_container_width=True)
+    if (_plate_event and hasattr(_plate_event, "selection")
+            and _plate_event.selection.get("points")):
+        _clicked = _plate_event.selection["points"][0].get("customdata")
+        if _clicked:
+            st.session_state["selected_well"] = str(_clicked)
+            st.rerun()
+except TypeError:
+    st.plotly_chart(_plate_fig, use_container_width=True)
+
+# Selected-well mini detail
+_sel_well = st.session_state.get("selected_well")
+if _sel_well and _sel_well in label.wells:
+    _sw_strain = layout["strains"].get(_sel_well)
+    _sw_medium = layout["media"].get(_sel_well) or ""
+    _sw_dil    = layout["dilutions"].get(_sel_well)
+    _sw_dil_exp = normalize_dilution(_sw_dil, dil_mode) if _sw_dil is not None else 0.0
+    _sw_dil_label = f"10^{_sw_dil_exp:.0f}×" if _sw_dil_exp != 0 else "undiluted"
+    _sw_od = corrected_od(label, layout, _sel_well, do_blank, contaminated_wells)
+    _sw_color = all_strain_color.get(str(_sw_strain), "#555") if _sw_strain else "#555"
+    _fig_sw = go.Figure()
+    _fig_sw.add_trace(go.Scatter(
+        x=label.times_h, y=_sw_od, mode="lines",
+        line=dict(color=_sw_color, width=2),
+        hovertemplate="t=%{x:.2f} h<br>OD=%{y:.4f}<extra></extra>",
+    ))
+    _fig_sw.update_layout(
+        title=dict(
+            text=f"<b>{_sel_well}</b> · {_sw_strain} · {_sw_medium} · {_sw_dil_label}",
+            font=dict(size=12), x=0, xref="paper",
+        ),
+        template="simple_white", height=200,
+        margin=dict(l=60, r=20, t=36, b=40),
+        xaxis_title="Time (h)",
+        yaxis_title="OD − blank" if do_blank else "OD",
+        plot_bgcolor="white", paper_bgcolor="white",
+        hoverlabel=dict(bgcolor="#1a1a1a",
+                        font=dict(color="white", family="JetBrains Mono, monospace", size=11)),
+    )
+    st.plotly_chart(_fig_sw, use_container_width=True)
+    if st.button("✕ Clear selection", key="clear_well"):
+        st.session_state["selected_well"] = None
+        st.rerun()
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -807,12 +944,7 @@ def get_wells_for_strain(strain: str) -> list[tuple[str, float, str]]:
     return out
 
 
-# Generate color palette
-PALETTE = ["#8b3a2a", "#c06a3a", "#d9a54e", "#9c8e3a", "#5b7a3a", "#3a6b4e",
-           "#3a6b78", "#3d5a8a", "#5a4a8a", "#7a3a7a", "#a8456b", "#6b3d3d",
-           "#a87a4e", "#7a6b3a", "#4e8a6b", "#4e6b8a", "#7a4e8a", "#8a4e6b",
-           "#4a4a4a", "#6b4a2a", "#2a4a6b", "#5a8a3a", "#8a5a3a", "#3a8a8a"]
-strain_color = {s: PALETTE[i % len(PALETTE)] for i, s in enumerate(selected_strains)}
+strain_color = {s: all_strain_color[s] for s in selected_strains}
 
 # Compute per-strain mean trajectory (across dilutions) for fitting
 metrics_rows = []
@@ -952,7 +1084,12 @@ with st.spinner("Fitting growth models…"):
 
 # ---- Plot ----
 st.subheader("Growth curves")
-scale = st.radio("Y axis", ["OD", "ln(OD)"], horizontal=True, label_visibility="collapsed")
+_pcol1, _pcol2 = st.columns([1, 2])
+with _pcol1:
+    scale = st.radio("Y axis", ["OD", "ln(OD)"], horizontal=True, label_visibility="collapsed")
+with _pcol2:
+    curve_view = st.radio("Curves", ["Mean ± SD", "Individual wells"],
+                          horizontal=True, label_visibility="collapsed")
 
 fig = go.Figure()
 
@@ -967,32 +1104,53 @@ for strain in selected_strains:
         stacked[i] = corrected_od(label, layout, w, do_blank, contaminated_wells)
     if do_align and len(wells) > 1:
         stacked = align_traces(label.times_h, stacked, [d for _, d, _ in wells], align_od, align_ref_dil)
-    mean_trace = np.nanmean(stacked, axis=0)
-    sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
-    if scale == "ln(OD)":
-        y_mean = np.where(mean_trace > 0, np.log(np.maximum(mean_trace, 1e-10)), np.nan)
-        y_up = np.where(mean_trace + sd_trace > 0, np.log(np.maximum(mean_trace + sd_trace, 1e-10)), np.nan)
-        y_lo = np.where(mean_trace - sd_trace > 0, np.log(np.maximum(mean_trace - sd_trace, 1e-10)), np.nan)
+    if curve_view == "Individual wells":
+        _br, _bg, _bb = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        _dil_exps = [d for _, d, _ in wells]
+        _max_dil  = max(_dil_exps) if _dil_exps else 1.0
+        for _wi, (_w, _dil_exp, _med) in enumerate(wells):
+            _alpha = max(0.40, 1.0 - (_dil_exp / max(_max_dil, 1)) * 0.55)
+            _tc = f"rgba({_br},{_bg},{_bb},{_alpha:.2f})"
+            _dl = f"10^{_dil_exp:.0f}×" if _dil_exp != 0 else "1×"
+            _od = stacked[_wi]
+            _y = (np.where(_od > 0, np.log(np.maximum(_od, 1e-10)), np.nan)
+                  if scale == "ln(OD)" else _od)
+            _show_legend = (_wi == 0)
+            fig.add_trace(go.Scatter(
+                x=label.times_h, y=_y, mode="lines",
+                name=strain if _show_legend else f"{strain} · {_dl}",
+                legendgroup=strain,
+                showlegend=_show_legend,
+                line=dict(color=_tc, width=1.8),
+                hovertemplate=f"<b>{strain}</b> · {_w} · {_dl}<br>t=%{{x:.2f}} h<br>y=%{{y:.4f}}<extra></extra>",
+            ))
     else:
-        y_mean, y_up, y_lo = mean_trace, mean_trace + sd_trace, mean_trace - sd_trace
+        mean_trace = np.nanmean(stacked, axis=0)
+        sd_trace = np.nanstd(stacked, axis=0, ddof=1) if len(wells) > 1 else np.zeros(n)
 
-    # SD band
-    if len(wells) > 1:
+        if scale == "ln(OD)":
+            y_mean = np.where(mean_trace > 0, np.log(np.maximum(mean_trace, 1e-10)), np.nan)
+            y_up = np.where(mean_trace + sd_trace > 0, np.log(np.maximum(mean_trace + sd_trace, 1e-10)), np.nan)
+            y_lo = np.where(mean_trace - sd_trace > 0, np.log(np.maximum(mean_trace - sd_trace, 1e-10)), np.nan)
+        else:
+            y_mean, y_up, y_lo = mean_trace, mean_trace + sd_trace, mean_trace - sd_trace
+
+        if len(wells) > 1:
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([label.times_h, label.times_h[::-1]]),
+                y=np.concatenate([y_up, y_lo[::-1]]),
+                fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
+                showlegend=False, hoverinfo="skip",
+            ))
+
         fig.add_trace(go.Scatter(
-            x=np.concatenate([label.times_h, label.times_h[::-1]]),
-            y=np.concatenate([y_up, y_lo[::-1]]),
-            fill="toself", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.13)", line=dict(color="rgba(0,0,0,0)"),
-            showlegend=False, hoverinfo="skip",
+            x=label.times_h, y=y_mean, mode="lines",
+            name=strain,
+            line=dict(color=color, width=2),
+            legendgroup=strain,
+            hovertemplate=f"<b>{strain}</b><br>t=%{{x:.2f}} h<br>OD=%{{y:.3f}}<extra></extra>",
         ))
-
-    fig.add_trace(go.Scatter(
-        x=label.times_h, y=y_mean, mode="lines",
-        name=strain,
-        line=dict(color=color, width=2),
-        legendgroup=strain,
-        hovertemplate=f"<b>{strain}</b><br>t=%{{x:.2f}} h<br>OD=%{{y:.3f}}<extra></extra>",
-    ))
 
     # Overlay fit if available
     if strain in fit_objects:
@@ -1183,6 +1341,45 @@ if len(selected_strains) <= 12:  # don't render 25 expanders
                 c2.metric("Doubling time", f"{60*np.log(2)/f['mu']:.1f} min" if f['mu'] > 0 else "—")
                 c3.metric("Window center", f"{f['t_mid']:.2f} h")
                 st.caption(f"R² = {f['r2']:.4f}")
+            # Per-well individual growth curves
+            _n = len(label.times_s)
+            _stacked_pw = np.full((len(wells), _n), np.nan)
+            for _wi, (_w, _, _) in enumerate(wells):
+                _stacked_pw[_wi] = corrected_od(label, layout, _w, do_blank, contaminated_wells)
+            _base_color = strain_color[strain]
+            _br = int(_base_color[1:3], 16)
+            _bg = int(_base_color[3:5], 16)
+            _bb = int(_base_color[5:7], 16)
+            _dil_exps_pw = [d for _, d, _ in wells]
+            _max_dil_pw  = max(_dil_exps_pw) if _dil_exps_pw else 1.0
+            _fig_pw = go.Figure()
+            for _wi, (_w, _dil_exp, _med) in enumerate(wells):
+                _alpha_pw = max(0.40, 1.0 - (_dil_exp / max(_max_dil_pw, 1)) * 0.55)
+                _tc = f"rgba({_br},{_bg},{_bb},{_alpha_pw:.2f})"
+                _dl = f"10^{_dil_exp:.0f}×" if _dil_exp != 0 else "1×"
+                _od_pw = _stacked_pw[_wi]
+                _y_pw = (np.where(_od_pw > 0, np.log(np.maximum(_od_pw, 1e-10)), np.nan)
+                         if scale == "ln(OD)" else _od_pw)
+                _fig_pw.add_trace(go.Scatter(
+                    x=label.times_h, y=_y_pw, mode="lines",
+                    name=f"{_w} ({_dl})",
+                    line=dict(color=_tc, width=1.8),
+                    hovertemplate=f"{_w} · {_dl}<br>t=%{{x:.2f}} h · y=%{{y:.4f}}<extra></extra>",
+                ))
+            _fig_pw.update_layout(
+                template="simple_white", height=260,
+                margin=dict(l=60, r=10, t=8, b=50),
+                xaxis_title="Time (h)",
+                yaxis_title="ln(OD − blank)" if scale == "ln(OD)" else "OD − blank" if do_blank else "OD",
+                plot_bgcolor="white", paper_bgcolor="white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1,
+                            font=dict(size=10)),
+                hoverlabel=dict(bgcolor="#1a1a1a",
+                                font=dict(color="white", family="JetBrains Mono, monospace", size=11)),
+                xaxis=dict(dtick=2),
+            )
+            st.plotly_chart(_fig_pw, use_container_width=True, key=f"pw_{strain}")
+
             if per_well:
                 pw_df = pd.DataFrame([{
                     "well": p["well"], "dilution (log10)": p["dilution"],
