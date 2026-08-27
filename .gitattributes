@@ -1,0 +1,15 @@
+# Windows launcher files must have CRLF endings or cmd.exe/PowerShell
+# can mis-parse them. Forced on checkout regardless of platform, so the
+# release ZIP built on a Linux runner is still correct.
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.txt  text eol=crlf
+
+# Keep everything else LF.
+*.py   text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+
+# Never touch these.
+*.html binary
+*.xlsx binary

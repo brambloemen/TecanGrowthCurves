@@ -1,9 +1,17 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
 .env
 .venv/
+
+# Release staging folder produced by .github/workflows/release.yml
+dist/
+build/
+TecanGrowthCurves-Windows-*.zip
+
+# Experiment data stays out of the repo, but example/template layouts that
+# ship with the tool are tracked.
 *.xlsx
 *.xls
+!example_layout*.xlsx
+!config/*.xlsx

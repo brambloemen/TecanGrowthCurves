@@ -1,0 +1,70 @@
+===============================================================
+ TECAN GROWTH CURVE ANALYZER - HOW TO START
+===============================================================
+
+BEFORE YOU EXTRACT THE ZIP
+--------------------------
+Windows marks files downloaded from the internet as blocked.
+Clear that first, or the launcher may refuse to run:
+
+  1. Right-click the ZIP file you downloaded
+  2. Choose "Properties"
+  3. If you see an "Unblock" checkbox at the bottom, tick it
+  4. Click OK
+  5. NOW extract the ZIP (right-click > Extract All...)
+
+Extract it somewhere you can write to, such as your Desktop
+or Documents folder.
+
+
+TO START THE FULL ANALYZER
+--------------------------
+Double-click:
+
+    Start Tecan Analyzer.bat
+
+The FIRST time you do this it sets itself up: it downloads about
+100 MB and takes roughly 3-10 minutes. You do not need administrator
+rights, and nothing is installed system-wide - everything goes into
+your own user folder.
+
+Every time after that, it starts in a few seconds.
+
+Your web browser will open automatically. Keep the black window
+open while you work; closing it stops the analyzer.
+
+
+NO INTERNET, OR SETUP BLOCKED BY IT?
+------------------------------------
+Double-click:
+
+    Open Offline HTML Tool.bat
+
+This is a simpler version that runs entirely inside your browser
+with nothing to install. It gives you the growth curves and
+sliding-window growth rates, but not the model fitting.
+
+
+WHAT YOU NEED TO LOAD
+---------------------
+Two Excel files:
+
+  1. Your Tecan i-control kinetic export (.xlsx)
+  2. A plate layout file (.xlsx) with three sheets named
+     "Strains", "Dilutions" and "Media"
+
+If you do not have a layout file yet, open the offline HTML tool
+and click "Download blank layout template" to get a correctly
+formatted starting point.
+
+
+TO REMOVE IT AGAIN
+------------------
+Double-click "Uninstall.bat". This deletes the private Python
+environment only - your Excel files are never touched.
+
+
+SOMETHING WENT WRONG?
+---------------------
+The window will tell you what happened and what to try. If you
+are stuck, send that message to Bram Bloemen.

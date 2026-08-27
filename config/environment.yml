@@ -1,12 +1,31 @@
+# Environment for the Streamlit analyzer.
+#
+# This file is the single source of truth for the app's dependencies. The
+# Windows launcher (scripts/bootstrap.ps1) builds its private environment
+# from it and rebuilds automatically whenever this file changes, so keep
+# edits here rather than installing packages by hand.
+#
+# Manual use:
+#   conda env create -f config/environment.yml
+#   conda activate tecan-growth-curves
+#   streamlit run tecan_streamlit.py
+
 name: tecan-growth-curves
+
 channels:
   - conda-forge
-  - defaults
+
 dependencies:
-  - python>=3.10
-  - streamlit
-  - pandas
-  - numpy
-  - scipy
-  - openpyxl
-  - plotly
+  # Pinned to a specific minor version so every colleague gets an identical,
+  # well-tested environment. 3.10 is the hard floor: tecan_streamlit.py uses
+  # PEP 604 annotations (`float | None`), which are evaluated at import time.
+  - python=3.12
+
+  # >=1.35 is required for st.plotly_chart(..., on_select=...), which drives
+  # the clickable plate view.
+  - streamlit>=1.40
+  - pandas>=2.0
+  - numpy>=1.24
+  - scipy>=1.10
+  - openpyxl>=3.1
+  - plotly>=5.18
