@@ -1,0 +1,117 @@
+name: Build release ZIP
+
+# Publishes the double-click Windows bundle to GitHub Releases.
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Can also be run by hand from the Actions tab to check the ZIP contents
+# without cutting a release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        # .gitattributes forces CRLF on the .bat/.ps1/.txt files even here,
+        # so the bundle is correct despite being built on Linux.
+
+      - name: Stage the distribution folder
+        run: |
+          set -euo pipefail
+          DIST=dist/TecanGrowthCurves
+          mkdir -p "$DIST/scripts" "$DIST/config"
+
+          cp "START HERE.txt"                  "$DIST/"
+          cp "Start Tecan Analyzer.bat"        "$DIST/"
+          cp "Open Offline HTML Tool.bat"      "$DIST/"
+          cp "Uninstall.bat"                   "$DIST/"
+          cp tecan_streamlit.py                "$DIST/"
+          cp tecan_growth_analyzer_live.html   "$DIST/"
+          cp README.md                         "$DIST/"
+          cp LICENSE                           "$DIST/"
+          cp scripts/bootstrap.ps1             "$DIST/scripts/"
+          cp config/environment.yml            "$DIST/config/"
+
+          echo "Staged contents:"
+          find "$DIST" -type f -printf '  %-45p %10s bytes\n' | sort
+
+      - name: Verify CRLF line endings on Windows scripts
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in "dist/TecanGrowthCurves/Start Tecan Analyzer.bat" \
+                   "dist/TecanGrowthCurves/Open Offline HTML Tool.bat" \
+                   "dist/TecanGrowthCurves/Uninstall.bat" \
+                   "dist/TecanGrowthCurves/START HERE.txt" \
+                   "dist/TecanGrowthCurves/scripts/bootstrap.ps1"; do
+            if ! grep -qU $'\r' "$f"; then
+              echo "::error file=$f::missing CRLF line endings"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Create the ZIP
+        run: |
+          set -euo pipefail
+          # Manual runs are test builds, not releases - name them so the two
+          # can never be confused when downloaded side by side.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="testbuild"
+          else
+            VERSION="${GITHUB_REF_NAME:-dev}"
+          fi
+          NAME="TecanGrowthCurves-Windows-${VERSION}.zip"
+          (cd dist && zip -r -q "../$NAME" TecanGrowthCurves)
+          echo "ZIP_NAME=$NAME" >> "$GITHUB_ENV"
+          ls -lh "$NAME"
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: ${{ env.ZIP_NAME }}
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          cat > notes.md <<'NOTES'
+          ## Install on Windows (no coding required)
+
+          1. Download the `TecanGrowthCurves-Windows-*.zip` below.
+          2. **Right-click the ZIP -> Properties -> tick "Unblock" -> OK.**
+          3. Extract it to your Desktop or Documents folder.
+          4. Double-click **`Start Tecan Analyzer.bat`**.
+
+          The first launch sets itself up (about 100 MB, 3-10 minutes). No
+          administrator rights are needed and nothing is installed
+          system-wide. Later launches start in seconds.
+
+          Need something with no setup at all? Double-click
+          `Open Offline HTML Tool.bat` instead.
+          NOTES
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$ZIP_NAME" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$ZIP_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Tecan Growth Curve Analyzer $GITHUB_REF_NAME" \
+              --notes-file notes.md
+          fi

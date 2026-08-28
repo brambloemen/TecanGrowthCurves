@@ -2,6 +2,46 @@
 
 Two tools, same inputs, different strengths.
 
+---
+
+## Install on Windows (no coding required)
+
+For colleagues who just want to use the tool:
+
+1. Go to the [Releases page](../../releases) and download
+   `TecanGrowthCurves-Windows-*.zip`.
+2. **Right-click the ZIP → Properties → tick "Unblock" → OK.** Windows blocks
+   files downloaded from the internet; skipping this makes the launcher refuse
+   to start.
+3. Extract it somewhere you can write to — Desktop or Documents.
+4. Double-click **`Start Tecan Analyzer.bat`**.
+
+The first launch sets itself up: it downloads about 100 MB and takes 3–10
+minutes. **No administrator rights are needed** — it installs a private Python
+environment into your own `%LOCALAPPDATA%\TecanGrowthCurves` folder, does not
+change `PATH`, and does not disturb any Python or conda already on the machine.
+Every launch after that takes a few seconds. Your browser opens automatically.
+
+`Uninstall.bat` removes that private environment again; it never touches your
+data files.
+
+If PowerShell is blocked by IT policy, or there is no internet, double-click
+**`Open Offline HTML Tool.bat`** instead — the browser-only version needs no
+setup at all (see Tool 1 below).
+
+### Cutting a release (maintainer)
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+`.github/workflows/release.yml` builds the ZIP and attaches it to a GitHub
+Release. Run it from the Actions tab (`workflow_dispatch`) to inspect the
+bundle without publishing.
+
+---
+
 ## Inputs (shared between both tools)
 
 Both versions take:
@@ -66,9 +106,22 @@ selection. You can edit the Python to add your own analyses.
 
 ### Install
 
+Non-developers should use the Windows launcher at the top of this README
+instead. To set it up by hand:
+
 ```bash
-pip install streamlit pandas numpy scipy openpyxl plotly
+conda env create -f config/environment.yml
+conda activate tecan-growth-curves
 ```
+
+`config/environment.yml` is the single source of truth for dependencies — the
+Windows launcher builds from the same file. Or with pip:
+
+```bash
+pip install "streamlit>=1.40" "pandas>=2.0" "numpy>=1.24" "scipy>=1.10" "openpyxl>=3.1" "plotly>=5.18"
+```
+
+Python 3.10 or newer is required.
 
 ### Run
 
