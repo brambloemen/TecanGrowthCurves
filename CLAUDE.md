@@ -47,3 +47,14 @@ Self-contained: all JS inline, no external dependencies except SheetJS (bundled)
 - **Baranyi model is present in code but disabled** — a log10-vs-ln parameterization issue inflates μ by ~2×; see inline comment in `baranyi()`.
 - **Per-well mechanistic fitting is disabled** — individual noisy wells cause curve_fit to overestimate μ by 30–50%; per-well path uses sliding-window only.
 - **Gompertz μ_max runs 10–30% higher than sliding-window** by construction (inflection-point tangent vs finite-window chord); this is documented as expected behavior, not a bug.
+
+## Windows distribution
+
+Non-technical users get a ZIP from GitHub Releases and double-click
+`Start Tecan Analyzer.bat`. That calls `scripts/bootstrap.ps1`, which builds a
+private conda environment under `%LOCALAPPDATA%\TecanGrowthCurves` from
+`config/environment.yml` — no admin rights, no PATH changes, no interference
+with any existing Python. The environment is rebuilt automatically when
+`config/environment.yml` changes (tracked by a SHA256 marker), so that file is
+the single source of truth for dependencies; do not add packages any other way.
+`.github/workflows/release.yml` builds and attaches the ZIP on a `v*` tag push.

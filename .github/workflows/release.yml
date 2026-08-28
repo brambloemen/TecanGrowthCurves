@@ -65,7 +65,13 @@ jobs:
       - name: Create the ZIP
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME:-dev}"
+          # Manual runs are test builds, not releases - name them so the two
+          # can never be confused when downloaded side by side.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="testbuild"
+          else
+            VERSION="${GITHUB_REF_NAME:-dev}"
+          fi
           NAME="TecanGrowthCurves-Windows-${VERSION}.zip"
           (cd dist && zip -r -q "../$NAME" TecanGrowthCurves)
           echo "ZIP_NAME=$NAME" >> "$GITHUB_ENV"
